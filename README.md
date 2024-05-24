@@ -11,16 +11,6 @@ The repository includes implementation of the experiments conducted using variou
 ## Usage
 Instructions for setting up the environment, running the experiments, and analyzing the results are provided in the respective folders. Each experiment folder contains a README with detailed steps and configurations used.
 
-## Citation
-If you find our research useful, please consider citing:
-
-@inproceedings{warmup2024,
-  title={Why Warmup the Learning Rate? Underlying Mechanisms and Improvements},
-  author={Anonymous},
-  booktitle={38th Conference on Neural Information Processing Systems},
-  year={2024}
-}
-
 ## License
 This project is licensed under the MIT License - see the LICENSE.md file for details.
 
