@@ -119,11 +119,6 @@ def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds
         # train for one step
         state, logits_step, grads_step, loss_step, sharpness_step, vs_step, n_iter = train_utils.train_sharpness_lobpcg_step(state, batch, config.loss_fn, vs_init, m_iter = config.m_iter, tol = config.tol)
         
-        # while n_iter == config.m_iter:
-        #     key, _ = jax.random.split(key, 2)
-        #     vs_init = jax.random.normal(key, shape = (flat_params.shape[0], config.topk)) 
-        #     sharpness_step, vs_step, n_iter = train_utils.hessian_lobpcg_step(state, batch, config.loss_fn, vs_init, m_iter = config.m_iter, tol = config.tol)
-        
         sharpness_step = sharpness_step.squeeze()
 
         # estimate grads norm
