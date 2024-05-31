@@ -4,7 +4,8 @@ This repository contains the source of code used in our paper. Here, we provide 
 ## Code Structure
 The repository is structured to include implementations for various experiments using different network architectures and optimization algorithms:
 
-- **Vision Folder**: Contains scripts for image classification tasks.
+- **vision Folder**: Contains scripts for image classification tasks.
+- **test Folder**: Contains unit tests to check the correcteness of custom Adam implementation by comparing it to the optax implementation.
 
 ## Environment Setup
 To ensure that the code runs smoothly, you must install the necessary libraries. Use the following command to install dependencies from the provided `requirements.txt`:
