@@ -1,13 +1,11 @@
 # in use imports
-
 import utils.model_utils as model_utils
-import utils.train_utils64 as train_utils
+import utils.train_utils as train_utils
 import utils.data_utils as data_utils
 import utils.loss_utils as loss_utils
 import utils.schedules_utils as schedules_utils
 
 import jax
-jax.config.update("jax_enable_x64", True) # enable float64 calculations
 from jax import numpy as jnp
 import optax
 from flax import linen as nn
@@ -21,8 +19,8 @@ import argparse
 import math
 
 # for deterministic gpu computations
-# import os
-# os.environ['XLA_FLAGS'] = '--xla_gpu_deterministic_ops=true'
+import os
+os.environ['XLA_FLAGS'] = '--xla_gpu_deterministic_ops=true'
 
 """Model definition and train state definition"""
 
@@ -41,9 +39,9 @@ def create_train_state(config: argparse.ArgumentParser, batch: Tuple):
     
     # debugging: check shapes and norms
     shapes = jax.tree_util.tree_map(lambda x: x.shape, init_params)
-    #print(shapes)
+    print(shapes)
     norms = jax.tree_util.tree_map(lambda x: config.width * jnp.var(x), init_params)
-    #print(norms)
+    print(norms)
 
     # count the number of parameters
     num_params = model_utils.count_parameters(init_params)
@@ -58,7 +56,7 @@ def create_train_state(config: argparse.ArgumentParser, batch: Tuple):
     return state, num_params
 
 
-def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds: Tuple, sharpness_init = None):
+def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds: Tuple):
     "train model acording the config"
     
     # create a train state
@@ -70,16 +68,16 @@ def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds
     train_loader = train_utils.data_stream(seed, train_ds, config.batch_size, augment = config.use_augment)
     test_loader = train_utils.data_stream(seed, test_ds, config.batch_size, augment = False)
 
-    print(f'Estimating Sharpness')
     # prepare an initial guess for the eigenvectors of the hessian
     flat_params, rebuild_fn = jax.flatten_util.ravel_pytree(state.params)
     key = jax.random.PRNGKey(93)
-    vs_init = jax.random.normal(key, shape = (flat_params.shape[0], config.topk), dtype = jnp.float64) 
+    vs_init = jax.random.normal(key, shape = (flat_params.shape[0], config.topk)) 
     # compute sharpness and update the target learning rate
     sharpness_init = train_utils.compute_sharpness_dataset(state, train_loader, config.loss_fn, vs_init, config.measure_batches)
 
     config.lr_trgt = config.c_trgt / sharpness_init
     print(f'Initial sharpness: {sharpness_init:0.4f}, Target learning rate: {config.lr_trgt:0.4f}')
+    
     
     ########### TRAINING ##############
         
@@ -92,7 +90,7 @@ def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds
     running_loss = 0.0
     running_accuracy = 0.0
 
-    lr_step = config.lr_init
+    state.update_learning_rate(learning_rate = config.lr_init)
     config.lr_min = config.lr_trgt / 10.0
 
     for step in range(config.num_steps):  
@@ -104,6 +102,7 @@ def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds
         imgs, targets = batch
 
         # update the learning rate in the warmup phase
+                # update the learning rate in the warmup phase
         if step < config.warmup_steps:
             lr_step = schedules_utils.polynomial_warmup(state.step+1, config.lr_init, config.lr_trgt, config.warmup_steps, exponent = config.warmup_exponent) # state.step + 1 used because there is not training step yet
         else:
@@ -111,30 +110,15 @@ def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds
 
         # update the learning rate
         state.update_learning_rate(learning_rate = lr_step)
-
-        # estimate weight norm
-        flat_params, rebuild_fn = jax.flatten_util.ravel_pytree(state.params)
-        params_norm_step = jnp.linalg.norm(flat_params)
-
         # train for one step
-        state, logits_step, grads_step, loss_step, sharpness_step, vs_step, n_iter = train_utils.train_sharpness_lobpcg_step(state, batch, config.loss_fn, vs_init, m_iter = config.m_iter, tol = config.tol)
-        
-        sharpness_step = sharpness_step.squeeze()
+        state, logits_step, grads_step, loss_step = train_utils.train_step(state, batch, config.loss_fn)
 
-        # estimate grads norm
-        flat_grads, rebuild_fn = jax.flatten_util.ravel_pytree(grads_step)
-        grads_norm_step = jnp.linalg.norm(flat_grads)
-
-        # estimate logits norm
-        logits_norm_step = jnp.linalg.norm(logits_step, axis = 1).mean()
-        
-        # estimate accuracy
         accuracy_step = train_utils.compute_accuracy(logits_step, targets)
 
-        result = np.array([state.step, epoch, lr_step, loss_step, accuracy_step, params_norm_step, logits_norm_step, grads_norm_step, sharpness_step, n_iter])
+        result = np.array([state.step, epoch, lr_step, loss_step, accuracy_step, sharpness_init, config.lr_init])
         train_results.append(result)
 
-        print(f't: {state.step}, lr_step: {lr_step:0.4f}, loss: {loss_step:0.4f}, accuracy: {accuracy_step:0.4f}, sharpness: {sharpness_step:0.4f}, n_iter: {n_iter}')
+        # print(f't: {state.step}, lr: {lr_step:0.4f}, loss: {loss_step:0.4f}, accuracy: {accuracy_step:0.4f}, sharpness: {sharpness_init:0.4f}')
         
         #check for divergence
         if (jnp.isnan(loss_step) or jnp.isinf(loss_step)): divergence = True; break
@@ -154,14 +138,15 @@ def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds
             # estimate test accuracy
             test_loss, test_accuracy = train_utils.compute_eval_metrics_dataset(state, test_loader, config.loss_fn, config.num_test, config.batch_size)
             print(f't: {state.step}, lr_step: {lr_step:0.4f}, training loss: {train_loss:0.4f}, train_accuracy: {train_accuracy:0.4f}, test_loss: {test_loss:0.4f}, test_accuracy: {test_accuracy:0.4f}')
-            result = np.array([state.step, epoch, lr_step, train_loss, train_accuracy, test_loss, test_accuracy, sharpness_step])
+            result = np.asarray([state.step, epoch, lr_step, train_loss, train_accuracy, test_loss, test_accuracy, sharpness_init, config.lr_init])
             eval_results.append(result)
     
     
     train_results = np.asarray(train_results)
+
     eval_results = np.asarray(eval_results)
     
-    return divergence, train_results, eval_results, num_params
+    return divergence, train_results, eval_results, num_params, sharpness_init
 
 models = {'WideResNet16_sp': model_utils.WideResNet16, 'WideResNet20_sp': model_utils.WideResNet20, 'WideResNet28_sp': model_utils.WideResNet28, 'WideResNet40_sp': model_utils.WideResNet40, 'WideResNet16_mup': model_utils.WideResNet16_mup, 'WideResNet20_mup': model_utils.WideResNet20_mup, 'WideResNet28_mup': model_utils.WideResNet28_mup, 'WideResNet40_mup': model_utils.WideResNet40_mup}
 loss_fns = {'mse': loss_utils.mse_loss, 'xent': loss_utils.cross_entropy_loss}
@@ -171,15 +156,14 @@ activations = {'relu': nn.relu, 'tanh': jnp.tanh, 'linear': lambda x: x}
 parser = argparse.ArgumentParser(description = 'Experiment parameters')
 parser.add_argument('--cluster', type = str, default = 'zaratan')
 # Dataset parameters
-parser.add_argument('--dataset', type = str, default = 'cifar-10')
+parser.add_argument('--dataset', type = str, default = 'cifar10')
 parser.add_argument('--out_dim', type = int, default = 10)
-parser.add_argument('--num_examples', type = int, default = 50000)
 
 # Model parameters
 parser.add_argument('--abc', type = str, default = 'sp')
-parser.add_argument('--width', type = int, default = 16)
-parser.add_argument('--widening_factor', type = int, default = 4)
-parser.add_argument('--depth', type = int, default = 16)
+parser.add_argument('--width', type = int, default = 64)
+parser.add_argument('--widening_factor', type = int, default = 1)
+parser.add_argument('--depth', type = int, default = 5)
 parser.add_argument('--bias', type = str, default = 'True') # careful about the usage
 parser.add_argument('--act_name', type = str, default = 'relu')
 parser.add_argument('--init_seed', type = int, default = 1)
@@ -190,25 +174,22 @@ parser.add_argument('--loss_name', type = str, default = 'xent')
 parser.add_argument('--augment', type = str, default = 'True')
 parser.add_argument('--opt_name', type = str, default = 'sgd')
 parser.add_argument('--sgd_seed', type = int, default = 1)
-parser.add_argument('--warmup_steps', type = int, default = 1)
+parser.add_argument('--warmup_steps', type = int, default = 512)
 parser.add_argument('--warmup_exponent', type = float, default = 1.0) # exponent for warmup
 parser.add_argument('--decay_exponent', type = float, default = 0.0) # exponent for decay
-parser.add_argument('--num_steps', type = int, default = 2048)
+parser.add_argument('--num_steps', type = int, default = 10_000)
+parser.add_argument('--lr_init', type = float, default = 1e-04)
 parser.add_argument('--lr_exp', type = float, default = 0.0)
 parser.add_argument('--lr_step', type = float, default = 1.0)
-parser.add_argument('--lr_init', type = float, default = 0.0)
 parser.add_argument('--lr_trgt', type = float, default = 0.1)
 parser.add_argument('--momentum', type = float, default = 0.0)
-parser.add_argument('--batch_size', type = int, default = 128)
+parser.add_argument('--batch_size', type = int, default = 512)
 # Evaluation
 parser.add_argument('--eval_interval', type = int, default = 1000)
 # Sharpness estimation
 parser.add_argument('--topk', type = int, default = 1)
 parser.add_argument('--sharpness_method', type = str, default = 'lobpcg')
 parser.add_argument('--measure_batches', type = int, default = 10)
-parser.add_argument('--tol', type = float, default = 1e-09)
-parser.add_argument('--m_iter', type = int, default = 40)
-
 
 config = parser.parse_args()
 
@@ -217,7 +198,6 @@ config.model = f'WideResNet{config.depth}_{config.abc}'
 config.use_bias = True if config.bias == 'True' else False
 config.use_augment = True if config.augment == 'True' else False
 config.act = model_utils.activations[config.act_name]
-
 # define loss
 config.loss_fn = loss_fns[config.loss_name]
 
@@ -246,24 +226,24 @@ print(config)
 divergence = False
 lr_exp = config.lr_exp
 
+while not divergence:
+    config.c_trgt = 2**lr_exp
+    divergence, train_results, eval_results, num_params, sharpness_init = train_and_evaluate(config, (x_train, y_train), (x_test, y_test))
 
-config.c_trgt = 2**lr_exp
-divergence, train_results, eval_results, num_params = train_and_evaluate(config, (x_train, y_train), (x_test, y_test))
-
-# create a dataframe
-# result = np.array([state.step, epoch, lr_step, loss_step, accuracy_step, params_norm_step, logits_norm_step, grads_norm_step, sharpness_step, n_iter])
-df_train = pd.DataFrame(train_results, columns = ['step', 'epoch', 'lr', 'loss_step', 'accuracy_step', 'params_norm_step', 'logits_norm_step', 'grads_norm_step', 'sharpness_step', 'n_iter'])
-df_train['num_params'] = num_params
-# save training datai
-path = f'{save_dir}/train_{config.dataset}_{config.model}_scale{config.scale}_n{config.width}_w{config.widening_factor}_d{config.depth}_bias{config.use_bias}_{config.act_name}_I{config.init_seed}_J{config.sgd_seed}_{config.loss_name}_augment{config.augment}_{config.opt_name}_lrexp{config.lr_exp:0.4f}_k{config.warmup_exponent}_p{config.decay_exponent}_Twarm{config.warmup_steps}_T{config.num_steps}_B{config.batch_size}_m{config.momentum}_{config.sharpness_method}.tab'    
-df_train.to_csv(path, sep = '\t')
-
-# save evlauation data
-if not divergence:      
-    df_eval = pd.DataFrame(eval_results, columns = ['step', 'epoch', 'lr', 'train_loss', 'train_accuracy', 'test_loss', 'test_accuracy', 'sharpness_step'])
-    df_eval['num_params'] = num_params
-    # save evaluation data
-    path = f'{save_dir}/eval_{config.dataset}_{config.model}_scale{config.scale}_n{config.width}_w{config.widening_factor}_d{config.depth}_bias{config.use_bias}_{config.act_name}_I{config.init_seed}_J{config.sgd_seed}_{config.loss_name}_augment{config.augment}_{config.opt_name}_lrexp{config.lr_exp:0.4f}_k{config.warmup_exponent}_p{config.decay_exponent}_Twarm{config.warmup_steps}_T{config.num_steps}_B{config.batch_size}_m{config.momentum}_{config.sharpness_method}.tab'
-    df_eval.to_csv(path, sep = '\t')
-
- 
+    # create a dataframe
+    df_train = pd.DataFrame(train_results, columns = ['step', 'epoch', 'lr', 'loss_step', 'accuracy_step', 'sharpness_init', 'lr_init'])
+    df_train['num_params'] = num_params
+    # save training data
+    path = f'{save_dir}/train_{config.dataset}_{config.model}_scale{config.scale}_n{config.width}_w{config.widening_factor}_d{config.depth}_bias{config.use_bias}_{config.act_name}_I{config.init_seed}_J{config.sgd_seed}_{config.loss_name}_augment{config.augment}_{config.opt_name}_lrinit{config.lr_init}_lrexp{lr_exp:0.4f}_k{config.warmup_exponent}_p{config.decay_exponent}_Twarm{config.warmup_steps}_T{config.num_steps}_B{config.batch_size}_m{config.momentum}_{config.sharpness_method}.tab'    
+    df_train.to_csv(path, sep = '\t')
+    
+    if not divergence:
+        # save evlauation data    
+        df_eval = pd.DataFrame(eval_results, columns = ['step', 'epoch', 'lr', 'train_loss', 'train_accuracy', 'test_loss', 'test_accuracy', 'sharpness_init', 'lr_init'])
+        df_eval['num_params'] = num_params
+        # save evaluation data
+        path = f'{save_dir}/eval_{config.dataset}_{config.model}_scale{config.scale}_n{config.width}_w{config.widening_factor}_d{config.depth}_bias{config.use_bias}_{config.act_name}_I{config.init_seed}_J{config.sgd_seed}_{config.loss_name}_augment{config.augment}_{config.opt_name}_lrinit{config.lr_init}_lrexp{lr_exp:0.4f}_k{config.warmup_exponent}_p{config.decay_exponent}_Twarm{config.warmup_steps}_T{config.num_steps}_B{config.batch_size}_m{config.momentum}_{config.sharpness_method}.tab'
+        df_eval.to_csv(path, sep = '\t')
+        lr_exp += config.lr_step
+    else:
+        print(f'Divergence lr_exp: {lr_exp:0.4f}, lr_step: {config.lr_step:0.4f}')

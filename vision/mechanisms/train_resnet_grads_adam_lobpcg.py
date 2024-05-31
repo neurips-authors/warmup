@@ -259,16 +259,7 @@ config.loss_fn = loss_fns[config.loss_name]
 
 save_dir = 'resnet_results'
 
-# Dataset loading 
-
-if config.cluster == 'nexus':
-    config.ds_dir = '/nfshomes/dayal/datasets'
-elif config.cluster == 'zaratan':
-    config.ds_dir = '/home/dayal/scratch.cmtc/datasets'
-else:
-    config.ds_dir = 'datasets'
-
-(x_train, y_train), (x_test, y_test) = data_utils.load_image_data_tfds(config.ds_dir, config.dataset, flatten = False, subset = False)
+(x_train, y_train), (x_test, y_test) = data_utils.load_image_data_tfds(config.dataset, flatten = False, subset = True, num_examples = config.num_examples)
 
 config.num_train, config.num_test = x_train.shape[0], x_test.shape[0]
 
