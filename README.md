@@ -4,18 +4,18 @@ This repository contains the source of code used in our paper. Here, we provide 
 ## Code Structure
 The repository is structured to include implementations for various experiments using different network architectures and optimization algorithms:
 
-- **vision Folder**: Contains scripts for image classification tasks.
-- **test Folder**: Contains unit tests to check the correcteness of custom Adam implementation by comparing it to the optax implementation.
+- **vision folder**: Contains scripts for reproducing image classification experiments.
+- **test folder**: Contains unit tests to check the correcteness of custom Adam implementation by comparing it to the optax implementation.
 
 ## Environment Setup
-To ensure that the code runs smoothly, you must install the necessary libraries. Use the following command to install dependencies from the provided `requirements.txt`:
+To ensure that the code runs smoothly, install the necessary libraries by running:
 
 `pip install -r requirements.txt`
 
 ## Running Experiments
-Detailed steps to reproduce the experiments in the `vision` folder:
+Description of contents in the `vision` folder:
 
-1. **Warmup Mechanisms**: Demonstrates the sharpness evolution during warmup.
+1. **Warmup Mechanisms**: Demonstrates the sharpness evolution during warmup for different optimizers and architectures.
 2. **Standard Training**: Used to reproduce the phase diagrams and includes experiments with GI-Adam.
 3. **Initial Learning Rate Selection**: Reproduces the initial learning rate selection experiments.
 
