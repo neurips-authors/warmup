@@ -27,7 +27,7 @@ parser.add_argument('--cluster', type = str, default = 'zaratan')
 # Dataset parameters
 parser.add_argument('--dataset', type = str, default = 'cifar-10')
 parser.add_argument('--out_dim', type = int, default = 10)
-parser.add_argument('--num_examples', type = int, default = 50000)
+parser.add_argument('--num_examples', type = int, default = 5000)
 
 # Model parameters
 parser.add_argument('--abc', type = str, default = 'sp')
@@ -52,7 +52,7 @@ parser.add_argument('--lr_exp', type = float, default = 0.0)
 parser.add_argument('--lr_step', type = float, default = 1.0)
 parser.add_argument('--lr_init', type = float, default = 0.0)
 parser.add_argument('--momentum', type = float, default = 0.0)
-parser.add_argument('--batch_size', type = int, default = 512)
+parser.add_argument('--batch_size', type = int, default = 5000)
 # Sharpness estimation
 parser.add_argument('--topk', type = int, default = 1)
 parser.add_argument('--sharpness_method', type = str, default = 'lobpcg')
