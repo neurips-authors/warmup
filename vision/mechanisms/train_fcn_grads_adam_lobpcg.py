@@ -134,14 +134,17 @@ def train_and_evaluate(config: argparse.ArgumentParser, train_ds: Tuple, test_ds
         sharpness_step, vs_step, n_iter, pre_sharpness_step, pre_vs_step, pre_n_iter = train_utils.pre_hessian_lobpcg_custom_step(state, batch, config.loss_fn, vs_init, m_iter = config.m_iter, tol = config.tol)
 
         i = 0; j = 0   
-        while pre_n_iter == config.m_iter:
+        m_iter = config.m_iter
+        while pre_n_iter == m_iter:
             j+=1
+            if j == 10: m_iter = 1000
             print(f'Recomputing pre-sharpness: attempt {j}, original pre sharpness: {pre_sharpness_step.squeeze():0.4f}')
             key, _ = jax.random.split(key, 2)
             vs_init = jax.random.normal(key, shape = (flat_params.shape[0], config.topk)) 
-            sharpness_step, vs_step, n_iter, pre_sharpness_step, pre_vs_step, pre_n_iter = train_utils.pre_hessian_lobpcg_custom_step(state, batch, config.loss_fn, vs_init, m_iter = config.m_iter, tol = config.tol)
+            sharpness_step, vs_step, n_iter, pre_sharpness_step, pre_vs_step, pre_n_iter = train_utils.pre_hessian_lobpcg_custom_step(state, batch, config.loss_fn, vs_init, m_iter = m_iter, tol = config.tol)
             if j == 10: break
         
+        # Take a gradient step
         state, logits_step, grads_step, loss_step = train_utils.train_step(state, batch, config.loss_fn)
 
         # squeeze out sharpness and pre sharpness
@@ -234,7 +237,7 @@ parser.add_argument('--topk', type = int, default = 1)
 parser.add_argument('--sharpness_method', type = str, default = 'lobpcg')
 parser.add_argument('--measure_batches', type = int, default = 10)
 parser.add_argument('--tol', type = float, default = 1e-09)
-parser.add_argument('--m_iter', type = int, default = 1000)
+parser.add_argument('--m_iter', type = int, default = 100)
 
 
 config = parser.parse_args()
@@ -249,7 +252,16 @@ config.loss_fn = loss_fns[config.loss_name]
 
 save_dir = 'fcn_results'
 
-(x_train, y_train), (x_test, y_test) = data_utils.load_image_data_tfds(config.dataset, flatten = False, subset = True, num_examples = config.num_examples)
+# Dataset loading 
+
+if config.cluster == 'nexus':
+    config.ds_dir = '/nfshomes/dayal/datasets'
+elif config.cluster == 'zaratan':
+    config.ds_dir = '/home/dayal/scratch.cmtc/datasets'
+else:
+    config.ds_dir = 'datasets'
+
+(x_train, y_train), (x_test, y_test) = data_utils.load_image_data(config.ds_dir, config.dataset, flatten = False, subset = True, num_examples = config.num_examples)
 
 config.num_train, config.num_test = x_train.shape[0], x_test.shape[0]
 

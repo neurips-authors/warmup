@@ -389,8 +389,6 @@ def pre_hessian_lobpcg_custom_step(state: TrainState, batch: Tuple, loss_functio
     vs = vs / norm(vs, axis = -1, keepdims = True)
     pre_eigs, pre_eigvs, pre_n_iter = sparse.linalg.lobpcg_standard(body_hvp, vs, m = m_iter, tol = tol)
 
-    ### APPLY GRADIENTS
-    state = state.apply_gradients(grads = grads)
     return eigs, eigvs, n_iter, pre_eigs, pre_eigvs, pre_n_iter
 
 
